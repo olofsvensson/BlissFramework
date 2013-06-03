@@ -143,10 +143,6 @@ $.extend(MouseApp.Python.prototype, MouseApp.Terminal.prototype, {
           return; 
       }
 
-      //if (res.output.length > 0) {
-      //  this.write(res.output);
-      //}
-
       if (res.error.length > 0) {
          if (res.error == "CTRLC") {
            this.write("\033[1;4m<ctrl c>\033[m\n");

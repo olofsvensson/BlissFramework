@@ -19,11 +19,9 @@
              display:none
           }
         </style>
-        <p>
-	  <h1>Remote Interpreter</h1><br>
-          <div id="session"></div>
-          <a href="/"id="clear">Clear</a>
-	</p>
+        <h1>Remote interpreter</h1>
+        <br>
+        <a href="/"id="clear">Clear</a>
         <div id="terminal" class="clear">
 		<div id="python"></div>
 	</div>
@@ -39,9 +37,10 @@
                         rows: 24,
                         columns: 136,
                         name: 'Remote Interpreter',
-                        greeting: "",
+                        greeting: "Have fun",
                         ps: '>'
                 });
+
 
           function display_output(output) {
              wpython.write(output);
@@ -49,7 +48,7 @@
           function display_log(msg) {
              jQuery("#logger:first").append("<p>"+msg+"</p>");
           } 
-
+          
 	  $(document).ready(function() {
 		function resizeTerminal(e) {
 			var newWindowHeight = $(window).height();

@@ -13,6 +13,7 @@ import code
 import rlcompleter
 import pprint
 import traceback
+import cStringIO
 
 HISTORY = {}
 LOG = {}
@@ -90,8 +91,7 @@ def MyLogHandler(client_id):
   try:
     log_handler = LOG[client_id]
   except KeyError:
-    queue = QUEUE[client_id]
-    log_handler = _MyLogHandler(queue)
+    log_handler = _MyLogHandler(client_id)
     log_handler.setLevel(logging.DEBUG)
     logging.getLogger().addHandler(log_handler)
     LOG[client_id]=log_handler
@@ -99,9 +99,9 @@ def MyLogHandler(client_id):
   return log_handler
   
 class _MyLogHandler(logging.Handler):
-  def __init__(self, queue):
+  def __init__(self, client_id):
     logging.Handler.__init__(self)
-    self.queue = queue
+    self.queue = QUEUE[client_id]
     
   def emit(self, record):
     self.queue.put(("log_record", record.getMessage())) 
@@ -124,18 +124,11 @@ class _MyStdout:
     self.queue.put(("output", output))
     sys.__stdout__.write('[client_id %s] %d bytes output: %r\n' % (self.client_id, len(output), output))
 
-@bottle.route("/log/:client_id")
-def send_log_messages(client_id):
-  log_handler = MyLogHandler(client_id)
-  while True:
-    yield '<script type="text/javascript">window.parent.display_log(%r);</script>' % log_handler.get_log_message()
-
 @bottle.route("/output/:client_id")
 def send_output(client_id):
   queue = QUEUE[client_id]
   while True:
       item, data = queue.get()
-      print ">"*10,item, data
       if item == "output":
         yield '<script type="text/javascript">window.parent.display_output(%r);</script>' % data
       else:
@@ -213,8 +206,11 @@ def do_execute(python_code_to_execute, mystdout):
 @bottle.route('/')
 def main():
   contents = file(os.path.join(ROOT_PATH, "terminal.html"), "r")
-  QUEUE[str(id(contents))]=gevent.queue.Queue()
-  return contents.read() % (id(contents), id(contents)) 
+  client_id = str(id(contents))
+  QUEUE[client_id]=gevent.queue.Queue()
+  MyLogHandler(client_id)
+  MyStdout(client_id)
+  return contents.read() % ((id(contents), )*2) 
 
 @bottle.route("/lib/CodeMirror-2.3/lib/:filename")
 def send_static_codemirror(filename):
