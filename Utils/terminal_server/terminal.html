@@ -13,12 +13,6 @@
 	<link rel="stylesheet" href="css/screen.css" type="text/css" media="screen" charset="utf-8"></link>
 </head>
 <body>
-        <style type="text/css">
-          iframe.hidden
-          {
-             display:none
-          }
-        </style>
         <h1>Remote interpreter</h1>
         <br>
         <a href="/"id="clear">Clear</a>
@@ -30,8 +24,6 @@
           <div id="logger"></div>
         </div>       
  
-        <iframe width="0" height="0" class="hidden" tabindex="-1" src="./output/%d"></iframe>
-
 	<script type="text/javascript" charset="utf-8">
           var wpython = new MouseApp.Python('#python', {
                         rows: 24,
@@ -42,13 +34,6 @@
                 });
 
 
-          function display_output(output) {
-             wpython.write(output);
-          } 
-          function display_log(msg) {
-             jQuery("#logger:first").append("<p>"+msg+"</p>");
-          } 
-          
 	  $(document).ready(function() {
 		function resizeTerminal(e) {
 			var newWindowHeight = $(window).height();
@@ -67,6 +52,9 @@
 
                 wpython.executing = false;
                 wpython.session_id = %d; 
+ 
+                wpython.askForOutput();
+                wpython.askForLogMessages();
 	  });
 	</script>
 </body>

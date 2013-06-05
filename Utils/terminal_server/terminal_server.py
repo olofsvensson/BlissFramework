@@ -11,14 +11,14 @@ import gevent
 import logging
 import code
 import rlcompleter
-import pprint
 import traceback
 import cStringIO
+import json
 
 HISTORY = {}
 LOG = {}
 OUTPUT = {}
-QUEUE = {}
+STDOUTS = []
 CODE_EXECUTION = {}
 ROOT_PATH = os.path.dirname(os.path.abspath(__file__))
 INTERPRETER = None
@@ -59,14 +59,13 @@ class InteractiveInterpreter(code.InteractiveInterpreter):
       if code.softspace(sys.stdout, 0):
          print
 
-  def compile_and_run(self, python_code_to_execute, stdout, dontcompile=False):
+  def compile_and_run(self, python_code_to_execute, dontcompile=False):
     code_obj = None
     self.at_prompt = False
 
     try:
       if dontcompile:
-        with stdout:
-          self.runcode(python_code_to_execute)
+        self.runcode(python_code_to_execute)
       else:
         try:
           code_obj = code.compile_command(python_code_to_execute)
@@ -77,8 +76,7 @@ class InteractiveInterpreter(code.InteractiveInterpreter):
             # input is incomplete
             raise EOFError
           else:
-            with stdout:
-              self.runcode(code_obj)
+            self.runcode(code_obj)
 
             if self.error.tell() > 0:
               error_string = self.error.getvalue()
@@ -91,7 +89,7 @@ def MyLogHandler(client_id):
   try:
     log_handler = LOG[client_id]
   except KeyError:
-    log_handler = _MyLogHandler(client_id)
+    log_handler = _MyLogHandler()
     log_handler.setLevel(logging.DEBUG)
     logging.getLogger().addHandler(log_handler)
     LOG[client_id]=log_handler
@@ -99,45 +97,55 @@ def MyLogHandler(client_id):
   return log_handler
   
 class _MyLogHandler(logging.Handler):
-  def __init__(self, client_id):
+  def __init__(self):
     logging.Handler.__init__(self)
-    self.queue = QUEUE[client_id]
+    self.queue = gevent.queue.Queue() 
     
   def emit(self, record):
-    self.queue.put(("log_record", record.getMessage())) 
+    self.queue.put(record.getMessage()) 
 
-def MyStdout(client_id):
-  return OUTPUT.setdefault(client_id, _MyStdout(client_id))
-     
-class _MyStdout:
+class MyStdout:
   def __init__(self, client_id):
     self.client_id = client_id
-    self.queue = QUEUE[client_id]
 
   def __enter__(self):
+    STDOUTS.append(self)
     sys.stdout = self
 
   def __exit__(self, *args):
-    sys.stdout = sys.__stdout__
+    STDOUTS.pop()
+    if len(STDOUTS) == 0:
+      sys.stdout = sys.__stdout__
+    else: 
+      sys.stdout = STDOUTS[-1]
 
   def write(self, output):
-    self.queue.put(("output", output))
+    # find right client id depending on greenlet
+    for client_id, greenlet in CODE_EXECUTION.iteritems():
+      if greenlet == gevent.getcurrent():
+        break
+    else:
+        return
+
+    OUTPUT[client_id].put(output)
+
     sys.__stdout__.write('[client_id %s] %d bytes output: %r\n' % (self.client_id, len(output), output))
 
-@bottle.route("/output/:client_id")
-def send_output(client_id):
-  queue = QUEUE[client_id]
-  while True:
-      item, data = queue.get()
-      if item == "output":
-        yield '<script type="text/javascript">window.parent.display_output(%r);</script>' % data
-      else:
-        yield '<script type="text/javascript">window.parent.display_log(%r);</script>' % data
+@bottle.route("/output_request")
+def send_output():
+  client_id = bottle.request.GET["client_id"]
+  queue = OUTPUT[client_id]
+  return json.dumps(queue.get())
+
+@bottle.route("/log_msg_request")
+def send_log():
+  client_id = bottle.request.GET["client_id"]
+  return json.dumps(MyLogHandler(client_id).queue.get())
 
 @bottle.get("/history_request")
 def send_history():
   client_id = bottle.request.GET["client_id"]
-  return HISTORY.get(client_id, [])
+  return json.dumps(HISTORY.get(client_id, []))
 
 @bottle.get("/completion_request")
 def send_completion():
@@ -163,12 +171,18 @@ def send_completion():
       cmd = text[:completion_start_index]+possibilities[0]
     else:
       cmd = text
-    return { "possibilities":possibilities, "cmd": cmd }
-    
+    return json.dumps({ "possibilities":possibilities, "cmd": cmd })
+   
+@bottle.get("/abort")
+def abort_execution():
+  client_id = bottle.request.GET["client_id"]
+  CODE_EXECUTION[client_id].kill(exception=KeyboardInterrupt, block=True)
+ 
 @bottle.get("/command")
 def execute_command():
   client_id = bottle.request.GET["client_id"]
   code = bottle.request.GET["code"]
+  output_queue = OUTPUT[client_id]
 
   try:
     python_code_to_execute = str(code).strip()+"\n"
@@ -176,41 +190,36 @@ def execute_command():
     python_code_to_execute = ""
 
   if len(python_code_to_execute) == 0:
-    return {"error":""}
-  elif python_code_to_execute == "__CTRLC__\n":
-    try:
-      CODE_EXECUTION[client_id].kill(exception=KeyboardInterrupt)
-    except KeyError:
-      return {"error":"CTRLC"}
+    return json.dumps({"error":""})
   else:
     sys.__stdout__.write("storing command %r for history for client %s\n" % (python_code_to_execute, client_id))
     HISTORY.setdefault(client_id, []).append(python_code_to_execute)
-    mystdout = MyStdout(client_id)
-    CODE_EXECUTION[client_id] = gevent.spawn(do_execute, python_code_to_execute, mystdout)
-    res=CODE_EXECUTION[client_id].get()
-    time.sleep(0.02) #let time for output to be flushed
-    return res
+    stdout = MyStdout(client_id)
+    CODE_EXECUTION[client_id] = gevent.spawn(do_execute, python_code_to_execute, stdout) 
+    res = CODE_EXECUTION[client_id].get()
+    while output_queue.qsize()>0:
+      time.sleep(0.01) #let time for output to be flushed
+    return json.dumps(res)
 
-def do_execute(python_code_to_execute, mystdout):
-    try:
-      INTERPRETER.compile_and_run(python_code_to_execute, mystdout)
-    except EOFError:
-      return {"error":"EOF","input":python_code_to_execute}
-    except RuntimeError, e:
-      error_string = str(e)
-      sys.stderr.write(error_string)
-      return {"error":error_string}
-    else:
-      return {"error":""}
+def do_execute(python_code_to_execute, stdout):
+    with stdout:
+      try:
+        INTERPRETER.compile_and_run(python_code_to_execute)
+      except EOFError:
+        return {"error":"EOF","input":python_code_to_execute}
+      except RuntimeError, e:
+        error_string = str(e)
+        sys.stderr.write(error_string)
+        return {"error":error_string}
+      else:
+        return {"error":""}
 
 @bottle.route('/')
 def main():
   contents = file(os.path.join(ROOT_PATH, "terminal.html"), "r")
   client_id = str(id(contents))
-  QUEUE[client_id]=gevent.queue.Queue()
-  MyLogHandler(client_id)
-  MyStdout(client_id)
-  return contents.read() % ((id(contents), )*2) 
+  OUTPUT.setdefault(client_id, gevent.queue.Queue())
+  return contents.read() % id(contents) 
 
 @bottle.route("/lib/CodeMirror-2.3/lib/:filename")
 def send_static_codemirror(filename):

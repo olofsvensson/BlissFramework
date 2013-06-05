@@ -50,6 +50,42 @@ $.extend(MouseApp.Python.prototype, MouseApp.Terminal.prototype, {
       });
     },
 
+    abortExecution: function() {
+      var python = this;
+      $.ajax({
+        url: 'abort',
+        type: 'GET',
+        data: { "client_id": python.session_id },
+        dataType: 'json'
+    });
+   },
+
+    askForOutput: function() {
+      var python = this;
+      $.ajax({
+        error: function(XMLHttpRequest, textStatus, errorThrown) {},
+        url: 'output_request',
+        type: 'GET',
+        success: function(output) { python.write(output); },
+        complete: function() { python.askForOutput(); },
+        data: { "client_id": python.session_id },
+        dataType: 'json'
+    });
+   },
+
+    askForLogMessages: function() {
+      var python = this;
+      $.ajax({
+        error: function(XMLHttpRequest, textStatus, errorThrown) {},
+        url: 'log_msg_request',
+        type: 'GET',
+        success: function(msg) { jQuery("#logger:first").append("<p>"+msg+"</p>"); },
+        complete: function() { python.askForLogMessages(); },
+        data: { "client_id": python.session_id },
+        dataType: 'json'
+    });
+   },
+
    askForHistory: function() {
       var python = this;
       $.ajax({
@@ -109,7 +145,7 @@ $.extend(MouseApp.Python.prototype, MouseApp.Terminal.prototype, {
     });
    },
 
-   reply: function(res, textStatus) { 
+   reply: function(res) { 
       this.executing = false;
 
       if (res.error == "EOF") {
@@ -187,7 +223,7 @@ $.extend(MouseApp.Python.prototype, MouseApp.Terminal.prototype, {
       var term = this;
       if (this.executing) {
         this.typingOff();
-        this.fireOffCmd("__CTRLC__", (function(res) { term.reply(res) }));
+        this.abortExecution();
       } 
    } 
 });
