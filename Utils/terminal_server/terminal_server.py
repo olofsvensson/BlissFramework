@@ -18,10 +18,22 @@ import json
 HISTORY = {}
 LOG = {}
 OUTPUT = {}
-STDOUTS = []
 CODE_EXECUTION = {}
 ROOT_PATH = os.path.dirname(os.path.abspath(__file__))
 INTERPRETER = None
+
+class GreenletStdout:
+  def write(self, output):
+    # find right client id depending on greenlet
+    for client_id, greenlet in CODE_EXECUTION.iteritems():
+      if greenlet == gevent.getcurrent():
+        break
+    else:
+        return
+
+    OUTPUT[client_id].put(output)
+
+sys.stdout = GreenletStdout()
 
 # patch socket module;
 # by default bottle doesn't set address as reusable
@@ -104,48 +116,18 @@ class _MyLogHandler(logging.Handler):
   def emit(self, record):
     self.queue.put(record.getMessage()) 
 
-class MyStdout:
-  def __init__(self, client_id):
-    self.client_id = client_id
-
-  def __enter__(self):
-    STDOUTS.append(self)
-    sys.stdout = self
-
-  def __exit__(self, *args):
-    STDOUTS.pop()
-    if len(STDOUTS) == 0:
-      sys.stdout = sys.__stdout__
-    else: 
-      sys.stdout = STDOUTS[-1]
-
-  def write(self, output):
-    # find right client id depending on greenlet
-    for client_id, greenlet in CODE_EXECUTION.iteritems():
-      if greenlet == gevent.getcurrent():
-        break
-    else:
-        return
-
-    OUTPUT[client_id].put(output)
-
-    sys.__stdout__.write('[client_id %s] %d bytes output: %r\n' % (self.client_id, len(output), output))
-
 @bottle.route("/output_request")
 def send_output():
   client_id = bottle.request.GET["client_id"]
-  queue = OUTPUT[client_id]
-  return json.dumps(queue.get())
+  output = OUTPUT[client_id].get()
+  if output == "\n":
+    return json.dumps("")
+  return json.dumps(output)
 
 @bottle.route("/log_msg_request")
 def send_log():
   client_id = bottle.request.GET["client_id"]
   return json.dumps(MyLogHandler(client_id).queue.get())
-
-@bottle.get("/history_request")
-def send_history():
-  client_id = bottle.request.GET["client_id"]
-  return json.dumps(HISTORY.get(client_id, []))
 
 @bottle.get("/completion_request")
 def send_completion():
@@ -171,7 +153,7 @@ def send_completion():
       cmd = text[:completion_start_index]+possibilities[0]
     else:
       cmd = text
-    return json.dumps({ "possibilities":possibilities, "cmd": cmd })
+  return json.dumps({ "possibilities":possibilities, "cmd": cmd })
    
 @bottle.get("/abort")
 def abort_execution():
@@ -194,25 +176,23 @@ def execute_command():
   else:
     sys.__stdout__.write("storing command %r for history for client %s\n" % (python_code_to_execute, client_id))
     HISTORY.setdefault(client_id, []).append(python_code_to_execute)
-    stdout = MyStdout(client_id)
-    CODE_EXECUTION[client_id] = gevent.spawn(do_execute, python_code_to_execute, stdout) 
+    CODE_EXECUTION[client_id] = gevent.spawn(do_execute, python_code_to_execute) 
     res = CODE_EXECUTION[client_id].get()
     while output_queue.qsize()>0:
       time.sleep(0.01) #let time for output to be flushed
     return json.dumps(res)
 
-def do_execute(python_code_to_execute, stdout):
-    with stdout:
-      try:
-        INTERPRETER.compile_and_run(python_code_to_execute)
-      except EOFError:
-        return {"error":"EOF","input":python_code_to_execute}
-      except RuntimeError, e:
-        error_string = str(e)
-        sys.stderr.write(error_string)
-        return {"error":error_string}
-      else:
-        return {"error":""}
+def do_execute(python_code_to_execute):
+  try:
+    INTERPRETER.compile_and_run(python_code_to_execute)
+  except EOFError:
+    return {"error":"EOF","input":python_code_to_execute}
+  except RuntimeError, e:
+    error_string = str(e)
+    sys.stderr.write(error_string)
+    return {"error":error_string+"\n"}
+  else:
+    return {"error":""}
 
 @bottle.route('/')
 def main():
