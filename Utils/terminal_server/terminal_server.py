@@ -3,7 +3,7 @@ import re
 import sys
 import optparse
 import gevent
-import gevent.queue
+#import gevent.queue
 import bottle
 import socket
 import time

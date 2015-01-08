@@ -513,7 +513,8 @@ class InstanceListBrick(BlissWidget):
 
         if have_control:
             if self.xmlrpc_server:
-              gevent.spawn_later(1, self.xmlrpc_server.open)
+#              gevent.spawn_later(1, self.xmlrpc_server.open)
+                self.xmlrpc_server.open()
 
             self.inControl=None
             self.takeControlButton.setEnabled(False)

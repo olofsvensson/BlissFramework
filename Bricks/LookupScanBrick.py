@@ -132,7 +132,7 @@ class LookupScanBrick(BaseGraphicScan) :
     def _viewConnect(self,view) :
         self._graphicSelection = QubPolygoneDrawingMgr(view.canvas(),
                                                        view.matrix())
-        self._graphicSelection.setActionInfo('Grid grab, select the area')
+        logging.getLogger().info("Define grid: select the area")
         drawingobject = QubCanvasGrid(view.canvas())
         self._graphicSelection.addDrawingObject(drawingobject)
         
